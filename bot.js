@@ -36,7 +36,6 @@ function getSession(userId) {
 
 app.use(express.static(path.join(__dirname, 'public')))
 
-// Прокси для фото — скачиваем с Telegram и отдаём клиенту
 app.get('/api/photo/:fileId', async (req, res) => {
   try {
     const fileId = req.params.fileId
@@ -171,3 +170,6 @@ initDB().then(() => {
   bot.launch()
   console.log('Vemodmatch запущен 🖤')
 })
+
+process.once('SIGINT', () => bot.stop('SIGINT'))
+process.once('SIGTERM', () => bot.stop('SIGTERM'))
