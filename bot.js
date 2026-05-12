@@ -11,7 +11,6 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 })
 
-// Создаём таблицу если не существует
 async function initDB() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -37,13 +36,28 @@ function getSession(userId) {
 
 app.use(express.static(path.join(__dirname, 'public')))
 
-// API для Mini App — отдаёт список анкет
 app.get('/api/users', async (req, res) => {
   try {
     const result = await pool.query(
       'SELECT * FROM users ORDER BY created_at DESC LIMIT 50'
     )
-    res.json(result.rows)
+    const users = await Promise.all(result.rows.map(async (user) => {
+      if (user.photo) {
+        try {
+          const fileRes = await fetch(
+            `https://api.telegram.org/bot8624481057:AAGMM_2w7iHju1euRE3fo26uQOaZVQe7tiA/getFile?file_id=${user.photo}`
+          )
+          const fileData = await fileRes.json()
+          if (fileData.ok) {
+            user.photo_url = `https://api.telegram.org/file/bot8624481057:AAGMM_2w7iHju1euRE3fo26uQOaZVQe7tiA/${fileData.result.file_path}`
+          }
+        } catch (e) {
+          user.photo_url = null
+        }
+      }
+      return user
+    }))
+    res.json(users)
   } catch (e) {
     res.json([])
   }
@@ -107,7 +121,6 @@ bot.on('text', async (ctx) => {
   } else if (step === 'about') {
     session.about = ctx.message.text
 
-    // Сохраняем в базу
     try {
       await pool.query(
         `INSERT INTO users (id, name, age, city, music, about, photo)
