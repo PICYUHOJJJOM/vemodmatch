@@ -1,20 +1,53 @@
 const { Telegraf } = require('telegraf')
 const express = require('express')
 const path = require('path')
+const { Pool } = require('pg')
 
 const bot = new Telegraf('8624481057:AAGMM_2w7iHju1euRE3fo26uQOaZVQe7tiA')
 const app = express()
 
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+})
+
+// Создаём таблицу если не существует
+async function initDB() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id BIGINT PRIMARY KEY,
+      name TEXT,
+      age TEXT,
+      city TEXT,
+      music TEXT,
+      about TEXT,
+      photo TEXT,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `)
+  console.log('БД готова 🖤')
+}
+
 const sessions = {}
-const users = {}
 
 function getSession(userId) {
   if (!sessions[userId]) sessions[userId] = {}
   return sessions[userId]
 }
 
-// Отдаём Mini App как статику
 app.use(express.static(path.join(__dirname, 'public')))
+
+// API для Mini App — отдаёт список анкет
+app.get('/api/users', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM users ORDER BY created_at DESC LIMIT 50'
+    )
+    res.json(result.rows)
+  } catch (e) {
+    res.json([])
+  }
+})
 
 app.get('/app', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'))
@@ -40,7 +73,7 @@ bot.action('create_profile', (ctx) => {
   ctx.reply('Как тебя зовут? Напиши своё имя или никнейм:')
 })
 
-bot.on('photo', (ctx) => {
+bot.on('photo', async (ctx) => {
   const session = getSession(ctx.from.id)
   if (session.step === 'photo') {
     const photo = ctx.message.photo
@@ -51,7 +84,7 @@ bot.on('photo', (ctx) => {
   }
 })
 
-bot.on('text', (ctx) => {
+bot.on('text', async (ctx) => {
   const session = getSession(ctx.from.id)
   const step = session.step
 
@@ -74,20 +107,22 @@ bot.on('text', (ctx) => {
   } else if (step === 'about') {
     session.about = ctx.message.text
 
-    users[ctx.from.id] = {
-      name: session.name,
-      age: session.age,
-      city: session.city,
-      music: session.music,
-      photo: session.photo || null,
-      about: session.about
+    // Сохраняем в базу
+    try {
+      await pool.query(
+        `INSERT INTO users (id, name, age, city, music, about, photo)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (id) DO UPDATE SET
+           name=$2, age=$3, city=$4, music=$5, about=$6, photo=$7`,
+        [ctx.from.id, session.name, session.age, session.city, session.music, session.about, session.photo || null]
+      )
+    } catch (e) {
+      console.error('Ошибка сохранения:', e)
     }
 
     sessions[ctx.from.id] = {}
 
-    const u = users[ctx.from.id]
-
-    ctx.reply(`Профиль создан 🖤\n\n👤 ${u.name}, ${u.age} лет\n📍 ${u.city}\n🎵 ${u.music}\n💬 ${u.about}`, {
+    ctx.reply(`Профиль создан 🖤\n\n👤 ${session.name}, ${session.age} лет\n📍 ${session.city}\n🎵 ${session.music}\n💬 ${session.about}`, {
       reply_markup: {
         inline_keyboard: [
           [{ text: '🔍 Найти людей', web_app: { url: 'https://vemodmatch-production.up.railway.app/app' } }],
@@ -98,18 +133,21 @@ bot.on('text', (ctx) => {
   }
 })
 
-bot.action('my_profile', (ctx) => {
-  const u = users[ctx.from.id]
-  if (!u) {
-    ctx.reply('Сначала создай профиль 💀')
-    return
+bot.action('my_profile', async (ctx) => {
+  try {
+    const result = await pool.query('SELECT * FROM users WHERE id = $1', [ctx.from.id])
+    if (result.rows.length === 0) {
+      ctx.reply('Сначала создай профиль 💀')
+      return
+    }
+    const u = result.rows[0]
+    ctx.reply(`👤 ${u.name}, ${u.age} лет\n📍 ${u.city}\n🎵 ${u.music}\n💬 ${u.about}`)
+  } catch (e) {
+    ctx.reply('Ошибка загрузки профиля 🖤')
   }
-  ctx.reply(`👤 ${u.name}, ${u.age} лет\n📍 ${u.city}\n🎵 ${u.music}\n💬 ${u.about}`)
 })
 
-bot.action('find_people', (ctx) => {
-  ctx.reply('Поиск пока в разработке 🖤 Скоро!')
+initDB().then(() => {
+  bot.launch()
+  console.log('Vemodmatch запущен 🖤')
 })
-
-bot.launch()
-console.log('Vemodmatch запущен 🖤')
