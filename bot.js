@@ -36,28 +36,35 @@ function getSession(userId) {
 
 app.use(express.static(path.join(__dirname, 'public')))
 
+// Прокси для фото — скачиваем с Telegram и отдаём клиенту
+app.get('/api/photo/:fileId', async (req, res) => {
+  try {
+    const fileId = req.params.fileId
+    const fileRes = await fetch(
+      `https://api.telegram.org/bot8624481057:AAGMM_2w7iHju1euRE3fo26uQOaZVQe7tiA/getFile?file_id=${fileId}`
+    )
+    const fileData = await fileRes.json()
+    if (!fileData.ok) {
+      res.status(404).send('not found')
+      return
+    }
+    const photoUrl = `https://api.telegram.org/file/bot8624481057:AAGMM_2w7iHju1euRE3fo26uQOaZVQe7tiA/${fileData.result.file_path}`
+    const photoRes = await fetch(photoUrl)
+    const buffer = await photoRes.arrayBuffer()
+    res.setHeader('Content-Type', 'image/jpeg')
+    res.setHeader('Cache-Control', 'public, max-age=86400')
+    res.send(Buffer.from(buffer))
+  } catch (e) {
+    res.status(500).send('error')
+  }
+})
+
 app.get('/api/users', async (req, res) => {
   try {
     const result = await pool.query(
       'SELECT * FROM users ORDER BY created_at DESC LIMIT 50'
     )
-    const users = await Promise.all(result.rows.map(async (user) => {
-      if (user.photo) {
-        try {
-          const fileRes = await fetch(
-            `https://api.telegram.org/bot8624481057:AAGMM_2w7iHju1euRE3fo26uQOaZVQe7tiA/getFile?file_id=${user.photo}`
-          )
-          const fileData = await fileRes.json()
-          if (fileData.ok) {
-            user.photo_url = `https://api.telegram.org/file/bot8624481057:AAGMM_2w7iHju1euRE3fo26uQOaZVQe7tiA/${fileData.result.file_path}`
-          }
-        } catch (e) {
-          user.photo_url = null
-        }
-      }
-      return user
-    }))
-    res.json(users)
+    res.json(result.rows)
   } catch (e) {
     res.json([])
   }
